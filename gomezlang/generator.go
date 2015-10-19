@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"log"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -38,8 +39,12 @@ type gomezGenerator struct {
 
 func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	if node != nil {
-		log.Println("  start: ", node.Pos())
-		log.Println("  end: ", node.End())
+		log.Println("  start: ", g.fset.Position(node.Pos()).String())
+		log.Println("  end: ", g.fset.Position(node.End()).String())
+		g.output.WriteString("; " + reflect.TypeOf(node).String() + "\n")
+		if node.Pos().IsValid() {
+			g.output.WriteString("; " + g.fset.Position(node.Pos()).String() + "\n")
+		}
 	}
 	switch typedNode := node.(type) {
 	case *ast.File:
@@ -64,7 +69,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 				if obj.Kind == ast.Var {
 					// TODO add type to symbol
 					fmt.Println("FOUND GLOBAL VARIABLE")
-					g.symbolTable.AddSymbol(name, []string{"int32"}, "@"+name)
+					g.symbolTable.AddSymbol(name, []string{"i32"}, "@"+name)
 				}
 			}
 
@@ -114,23 +119,43 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 		}
 	case *ast.Ident:
 		{
-			switch typedNode.Obj.Kind {
-			case ast.Fun:
+			log.Println("NULL POINTER")
+			log.Println(typedNode)
+			log.Println(typedNode.Obj)
+			log.Println(typedNode.Name)
+			switch typedNode.Name {
+			case "len":
 				{
-					return "@" + typedNode.Name, nil
-				}
-			case ast.Var:
-				{
-					variable := "%" + strconv.Itoa(g.counter)
-					g.counter = g.counter + 1
-					_, _, internalName, _ := g.symbolTable.FindVariable(typedNode.Name)
-					// TODO handle not ok
-					g.output.WriteString("  " + variable + " = load i32* " + internalName + ", align 4\n")
-					return variable, nil
+					log.Println("LEN FOUND")
+					//					panic("len")
+					return "@len", nil
 				}
 			default:
 				{
-					return "", errors.New("Ident not implemented")
+					log.Println("DEFAULT FOUND", typedNode.Name)
+					switch typedNode.Obj.Kind {
+					case ast.Fun:
+						{
+							return "@" + typedNode.Name, nil
+						}
+					case ast.Var:
+						{
+							variable := "%" + strconv.Itoa(g.counter)
+							g.counter = g.counter + 1
+							_, varType, internalName, ok := g.symbolTable.FindVariable(typedNode.Name)
+							if ok != nil {
+								// TODO handle not ok
+								log.Fatal("Not OK")
+							}
+							log.Println(typedNode.Name, variable, varType, internalName)
+							g.output.WriteString("  " + variable + " = load " + varType[0] + "* " + internalName + ", align 4\n")
+							return variable, nil
+						}
+					default:
+						{
+							return "", errors.New("Ident not implemented")
+						}
+					}
 				}
 			}
 		}
@@ -138,21 +163,55 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 		{
 			name := ""
 			value := ""
+			varType := ""
 			var err error
 			fmt.Println("GenDecl: ", typedNode)
 			switch typedSpec := typedNode.Specs[0].(type) {
 			case *ast.ValueSpec:
 				{
 					name = typedSpec.Names[0].Name
-					value, err = g.walk(typedSpec.Values[0])
-					if err != nil {
-						return "", err
+					align := 4
+					if typedSpec.Type != nil {
+						switch typedSpecType := typedSpec.Type.(type) {
+						case *ast.ArrayType:
+							{
+								arrayLength := "0"
+								switch typedSpecTypeLengthNodet := typedSpecType.Len.(type) {
+								case *ast.BasicLit: {
+									arrayLength = typedSpecTypeLengthNode.Value
+								}
+								default:
+									{
+									}
+								}
+								varType = "[" + arrayLength + " x i32]"
+								align = 16
+							}
+						default:
+							{
+								varType = "i32"
+							}
+						}
 					}
+					fmt.Println("var name: " + name)
+					g.output.WriteString("%" + name + " = alloca " + varType + ", align " + strconv.Itoa(align) + "\n")
+
+					// set initial value
+					if len(typedSpec.Values) > 0 {
+						value, err = g.walk(typedSpec.Values[0])
+						if err != nil {
+							return "", err
+						}
+						result := name + " = " + varType + " " + value
+						g.output.WriteString("%" + result + "\n")
+					}
+
+					// record in table
+
+					g.symbolTable.AddSymbol(name, []string{varType}, "%"+name)
 				}
 			}
-			fmt.Println("var name: " + name)
-			//			g.variables.AddVariable("")
-			return name + " = i32 " + value, nil
+			return "", nil
 		}
 	case *ast.FuncDecl:
 		{
@@ -208,7 +267,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			for _, alloc := range allocations {
 				// TODO handle not ok
 				g.output.WriteString("  store i32 %_" + alloc + ", i32* %" + alloc + ", align 4\n")
-				g.symbolTable.AddSymbol(alloc, nil, "%"+alloc)
+				g.symbolTable.AddSymbol(alloc, []string{"i32"}, "%"+alloc)
 			}
 			g.walk(typedNode.Body)
 			if g.functionType == "void" {
@@ -250,9 +309,10 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			_, _, internalName, ok := g.symbolTable.FindVariable(left)
+			_, varType, internalName, ok := g.symbolTable.FindVariable(left)
+			varType = []string{"i32"}
 			if ok != nil {
-				left = g.symbolTable.AddSymbol(left, nil, "%"+left)
+				left = g.symbolTable.AddSymbol(left, varType, "%"+left)
 				g.output.WriteString("  %" + left + " = alloca i32, align 4\n")
 				internalName = "%" + left
 			}
@@ -433,6 +493,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			g.output.WriteString("; for post\n")
 			if typedNode.Post != nil {
 				_, err = g.walk(typedNode.Post)
+				fmt.Println(typedNode.Post)
 				if err != nil {
 					return "", err
 				}
@@ -466,6 +527,44 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			// TODO
 			log.Printf("case: %T\n", typedNode)
 			return "", errors.New("Not Implemented")
+		}
+	case *ast.DeclStmt:
+		{
+			return g.walk(typedNode.Decl)
+		}
+	case *ast.IndexExpr:
+		{
+			{
+				index, err := g.walk(typedNode.Index)
+				if err != nil {
+					return "", err
+				}
+
+				varName := ""
+				varType := []string{}
+				switch ident := typedNode.X.(type) {
+				case *ast.Ident:
+					{
+						varName = ident.Name
+						_, varType, _, _ = g.symbolTable.FindVariable(varName)
+					}
+				}
+				arrayName, err := g.walk(typedNode.X)
+				log.Println("Index: " + index)
+				log.Println("arrayName: " + arrayName)
+				g.output.WriteString("; index: " + index + "\n")
+				g.output.WriteString("; arrayName: " + arrayName + "\n")
+
+				dataPtr := "%" + strconv.Itoa(g.counter)
+				g.counter++
+				g.output.WriteString("  " + dataPtr + " = getelementptr inbounds " + varType[0] + "* %" + varName + ", i32 0, i32 " + index + "\n")
+
+				data := "%" + strconv.Itoa(g.counter)
+				g.counter++
+
+				g.output.WriteString("  " + data + " = load i32* " + dataPtr + ", align 4\n")
+				return data, nil
+			}
 		}
 	default:
 		{
