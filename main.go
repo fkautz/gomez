@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	gomez "github.com/fkautz/gomez/gomezlang"
+	"github.com/fkautz/gomez/libgomez"
 	"github.com/spf13/cobra"
 )
 
@@ -53,5 +53,5 @@ func compileGomezToLLVM(filename string) (string, error) {
 	}
 
 	ast.Print(fset, tree)
-	return gomez.GenerateLLVM(fset, tree)
+	return libgomez.GenerateLLVM(fset, tree)
 }

@@ -1,10 +1,7 @@
 package main
 
-import "os"
-
-func main() {
+func main() int {
 	x := 32
 	y := 64
-	z := x + y
-	os.Exit(z)
+	return x + y
 }

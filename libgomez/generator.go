@@ -1,4 +1,4 @@
-package gomez
+package libgomez
 
 import (
 	"bytes"
@@ -10,13 +10,12 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"html/template"
 )
 
 func GenerateLLVM(fset *token.FileSet, tree ast.Node) (string, error) {
 	g := &gomezGenerator{
-		importTable:   &SymbolTable{},
 		symbolTable:   &SymbolTable{},
-		functionTable: &SymbolTable{},
 		output:        bytes.NewBufferString(""),
 	}
 	g.fset = fset
@@ -30,9 +29,7 @@ func GenerateLLVM(fset *token.FileSet, tree ast.Node) (string, error) {
 type gomezGenerator struct {
 	fset          *token.FileSet
 	output        *bytes.Buffer
-	importTable   *SymbolTable
 	symbolTable   *SymbolTable
-	functionTable *SymbolTable
 	functionType  string
 	counter       int
 }
@@ -52,17 +49,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			log.Println("package name: ", typedNode.Name)
 			ast.Print(g.fset, typedNode.Name)
 			// Initialize symbol tables
-			g.importTable.PushFrame()
 			g.symbolTable.PushFrame()
-			g.functionTable.PushFrame()
-
-			// TODO Populate imports
-			for name, obj := range typedNode.Scope.Objects {
-				if obj.Kind == ast.Pkg {
-					// TODO add type to symbol
-					g.importTable.AddSymbol(name, nil, "")
-				}
-			}
 
 			// Populate variable table
 			for name, obj := range typedNode.Scope.Objects {
@@ -73,32 +60,18 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 				}
 			}
 
-			// Populate function table
-			for name, obj := range typedNode.Scope.Objects {
-				if obj.Kind == ast.Fun {
-					// TODO add type to function symbol
-					g.functionTable.AddSymbol(name, nil, "")
-					fmt.Println("In Symbol Table: ")
-					for k, v := range g.symbolTable.frames[0].variables {
-						fmt.Println(k, v)
-					}
-				}
-			}
-
 			// Emit functions
 			for _, decl := range typedNode.Decls {
 				switch typedDecl := decl.(type) {
 				case *ast.FuncDecl:
 					{
 						g.counter = 0
-						g.importTable.PushFrame()
 						g.symbolTable.PushFrame()
 
 						if _, err := g.walk(decl); err != nil {
 							return "", err
 						}
 
-						g.importTable.PopFrame()
 						g.symbolTable.PopFrame()
 					}
 				case *ast.GenDecl:
@@ -112,9 +85,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 					}
 				}
 			}
-			g.importTable.PopFrame()
 			g.symbolTable.PopFrame()
-			g.functionTable.PopFrame()
 			return "", nil
 		}
 	case *ast.Ident:
@@ -176,7 +147,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 						case *ast.ArrayType:
 							{
 								arrayLength := "0"
-								switch typedSpecTypeLengthNodet := typedSpecType.Len.(type) {
+								switch typedSpecTypeLengthNode := typedSpecType.Len.(type) {
 								case *ast.BasicLit: {
 									arrayLength = typedSpecTypeLengthNode.Value
 								}

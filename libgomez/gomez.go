@@ -1,4 +1,4 @@
-package gomez
+package libgomez
 
 type Compiler struct{}
 
