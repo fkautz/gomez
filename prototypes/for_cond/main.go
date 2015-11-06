@@ -8,10 +8,10 @@ func Foo(sum int, sum2 int) int {
 	for i := 0; i < sum2; i = i + 1 {
 		sum = sum + sum2
 	}
-	sum = Write(sum)
+	sum = Add(sum)
 	return sum
 }
 
-func Write(a int) int {
+func Add(a int) int {
 	return a + a
 }

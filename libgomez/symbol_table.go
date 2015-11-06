@@ -1,4 +1,4 @@
-package gomez
+package libgomez
 
 import (
 	"errors"

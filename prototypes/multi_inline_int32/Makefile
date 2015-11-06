@@ -10,7 +10,7 @@ optimized_main.o: optimized_main.ll
 	llc -filetype=obj optimized_main.ll
 
 main.ll: main.go
-	tigerbat compile -i main.go -o main.ll
+	gomez compile -i main.go -o main.ll
 
 clean: 
 	rm -rf main *.o *.ll
