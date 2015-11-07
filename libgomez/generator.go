@@ -3,14 +3,11 @@ package libgomez
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"go/ast"
 	"go/token"
-	"log"
 	"reflect"
 	"strconv"
 	"strings"
-	"html/template"
 )
 
 func GenerateLLVM(fset *token.FileSet, tree ast.Node) (string, error) {
@@ -19,11 +16,7 @@ func GenerateLLVM(fset *token.FileSet, tree ast.Node) (string, error) {
 		output:        bytes.NewBufferString(""),
 	}
 	g.fset = fset
-	a, b := g.walk(tree)
-	fmt.Println("complete")
-	fmt.Println(a)
-	fmt.Println(b)
-	return g.output.String(), nil
+	return g.walk(tree)
 }
 
 type gomezGenerator struct {
@@ -36,8 +29,6 @@ type gomezGenerator struct {
 
 func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	if node != nil {
-		log.Println("  start: ", g.fset.Position(node.Pos()).String())
-		log.Println("  end: ", g.fset.Position(node.End()).String())
 		g.output.WriteString("; " + reflect.TypeOf(node).String() + "\n")
 		if node.Pos().IsValid() {
 			g.output.WriteString("; " + g.fset.Position(node.Pos()).String() + "\n")
@@ -46,7 +37,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	switch typedNode := node.(type) {
 	case *ast.File:
 		{
-			log.Println("package name: ", typedNode.Name)
 			ast.Print(g.fset, typedNode.Name)
 			// Initialize symbol tables
 			g.symbolTable.PushFrame()
@@ -55,7 +45,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			for name, obj := range typedNode.Scope.Objects {
 				if obj.Kind == ast.Var {
 					// TODO add type to symbol
-					fmt.Println("FOUND GLOBAL VARIABLE")
 					g.symbolTable.AddSymbol(name, []string{"i32"}, "@"+name)
 				}
 			}
@@ -90,20 +79,14 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 		}
 	case *ast.Ident:
 		{
-			log.Println("NULL POINTER")
-			log.Println(typedNode)
-			log.Println(typedNode.Obj)
-			log.Println(typedNode.Name)
 			switch typedNode.Name {
 			case "len":
 				{
-					log.Println("LEN FOUND")
 					//					panic("len")
 					return "@len", nil
 				}
 			default:
 				{
-					log.Println("DEFAULT FOUND", typedNode.Name)
 					switch typedNode.Obj.Kind {
 					case ast.Fun:
 						{
@@ -116,9 +99,7 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 							_, varType, internalName, ok := g.symbolTable.FindVariable(typedNode.Name)
 							if ok != nil {
 								// TODO handle not ok
-								log.Fatal("Not OK")
 							}
-							log.Println(typedNode.Name, variable, varType, internalName)
 							g.output.WriteString("  " + variable + " = load " + varType[0] + "* " + internalName + ", align 4\n")
 							return variable, nil
 						}
@@ -136,7 +117,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			value := ""
 			varType := ""
 			var err error
-			fmt.Println("GenDecl: ", typedNode)
 			switch typedSpec := typedNode.Specs[0].(type) {
 			case *ast.ValueSpec:
 				{
@@ -164,7 +144,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 							}
 						}
 					}
-					fmt.Println("var name: " + name)
 					g.output.WriteString("%" + name + " = alloca " + varType + ", align " + strconv.Itoa(align) + "\n")
 
 					// set initial value
@@ -210,17 +189,11 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 				g.functionType = "void"
 			}
 
-			log.Println("Function Name: " + functionName)
 			g.output.WriteString("define " + g.functionType + " @" + functionName + "(")
-			fmt.Println("recv")
-			fmt.Println(typedNode.Type.Params)
-			fmt.Println(typedNode)
 			allocations := make([]string, 0)
 			if len(typedNode.Type.Params.List) > 0 {
 				for i, input := range typedNode.Type.Params.List {
-					fmt.Println("i", i)
 					for j, recv := range input.Names {
-						fmt.Println("j", j)
 						if !(i == 0 && j == 0) {
 							g.output.WriteString(", ")
 						}
@@ -251,7 +224,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	case *ast.BlockStmt:
 		{
 			for _, statement := range typedNode.List {
-				fmt.Println(statement)
 				g.walk(statement)
 			}
 			return "", nil
@@ -273,8 +245,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 		}
 	case *ast.AssignStmt:
 		{
-			fmt.Println("Assign Statement")
-			fmt.Println(typedNode)
 			left := typedNode.Lhs[0].(*ast.Ident).Name
 			right, err := g.walk(typedNode.Rhs[0])
 			if err != nil {
@@ -347,7 +317,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	case *ast.CallExpr:
 		{
 			funcName, err := g.walk(typedNode.Fun)
-			fmt.Println("calling: " + funcName)
 			if err != nil {
 				return "", err
 			}
@@ -464,7 +433,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 			g.output.WriteString("; for post\n")
 			if typedNode.Post != nil {
 				_, err = g.walk(typedNode.Post)
-				fmt.Println(typedNode.Post)
 				if err != nil {
 					return "", err
 				}
@@ -496,7 +464,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 	case *ast.IncDecStmt:
 		{
 			// TODO
-			log.Printf("case: %T\n", typedNode)
 			return "", errors.New("Not Implemented")
 		}
 	case *ast.DeclStmt:
@@ -521,8 +488,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 					}
 				}
 				arrayName, err := g.walk(typedNode.X)
-				log.Println("Index: " + index)
-				log.Println("arrayName: " + arrayName)
 				g.output.WriteString("; index: " + index + "\n")
 				g.output.WriteString("; arrayName: " + arrayName + "\n")
 
@@ -539,7 +504,6 @@ func (g *gomezGenerator) walk(node ast.Node) (string, error) {
 		}
 	default:
 		{
-			log.Printf("case: %T\n", typedNode)
 			return "", errors.New("Not Implemented")
 		}
 	}
